@@ -169,6 +169,8 @@ pub(crate) const INSTRUCTIONS: phf::Map<&'static str, InstructionSignature> = ph
     "putd" => InstructionSignature(&[VALUE, VALUE, VALUE]),
     "bdnvl" => InstructionSignature(&[DEVICE, LOGIC_TYPE, VALUE]),
     "bdnvs" => InstructionSignature(&[DEVICE, LOGIC_TYPE, VALUE]),
+    "ins" => InstructionSignature(&[REGISTER, VALUE, VALUE, VALUE]),
+    "ext" => InstructionSignature(&[REGISTER, VALUE, VALUE, VALUE]),
 };
 
 pub(crate) const LOGIC_TYPES: phf::Set<&'static str> = phf_set! {    "Acceleration",
@@ -790,6 +792,8 @@ pub(crate) const INSTRUCTION_DOCS: phf::Map<&'static str, &'static str> = phf_ma
     "abs" => "Register = the absolute value of a",
     "log" => "Register = log(a)",
     "exp" => "Register = exp(a)",
+    "ext" => "Extracts a bit field from a, beginning at b for c length and placed in the provided register. Payload cannot exceed 53 bits in final length.",
+    "ins" => "Inserts a bit field of a into the provided register, beginning at b for c length. Payload cannot exceed 53 bits in final length.",
     "rand" => "Register = a random value x with 0 &lt;= x &lt; 1",
     "yield" => "Pauses execution for 1 tick",
     "label" => "DEPRECATED - Use alias instead",
