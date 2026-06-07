@@ -375,7 +375,7 @@ impl LanguageServer for Backend {
                     kind: Some(InlayHintKind::TYPE),
                     text_edits: None,
                     tooltip: None,
-                    padding_left: None,
+                    padding_left: Some(true),
                     padding_right: None,
                     data: None,
                 });
