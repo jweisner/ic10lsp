@@ -403,6 +403,9 @@ impl LanguageServer for Backend {
         };
 
         let mut cursor = QueryCursor::new();
+        // Priority: more specific patterns listed first win over general ones at the same position.
+        // (label (identifier)@label) must come before (identifier)@variable so label names
+        // are not overwritten by the catch-all variable capture.
         let query = Query::new(
             &tree_sitter_ic10::language(),
             "(comment) @comment
@@ -416,10 +419,6 @@ impl LanguageServer for Backend {
         )
         .unwrap();
 
-        let mut previous_line = 0u32;
-        let mut previous_col = 0u32;
-        let mut last_emitted: Option<(usize, usize)> = None;
-
         let comment_idx = query.capture_index_for_name("comment").unwrap();
         let keyword_idx = query.capture_index_for_name("keyword").unwrap();
         let string_idx = query.capture_index_for_name("string").unwrap();
@@ -429,51 +428,76 @@ impl LanguageServer for Backend {
         let label_idx = query.capture_index_for_name("label").unwrap();
         let variable_idx = query.capture_index_for_name("variable").unwrap();
 
+        // Priority order: lower value = higher priority. Matches the query pattern specificity.
+        let priority = |idx: u32| -> u8 {
+            if idx == comment_idx { 0 }
+            else if idx == keyword_idx { 1 }
+            else if idx == string_idx { 2 }
+            else if idx == preproc_idx { 3 }
+            else if idx == macro_idx { 4 }
+            else if idx == float_idx { 5 }
+            else if idx == label_idx { 6 }
+            else if idx == variable_idx { 7 }
+            else { 255 }
+        };
+
+        // Collect all captures into a map keyed by (row, col), keeping highest-priority per position.
+        let mut token_map: std::collections::BTreeMap<(usize, usize), (u32, usize)> =
+            std::collections::BTreeMap::new();
+
         let mut captures = cursor.captures(&query, tree.root_node(), document.content.as_bytes());
         while let Some((capture, _)) = captures.next() {
             let node = capture.captures[0].node;
             let idx = capture.captures[0].index;
-            let start = node.range().start_point;
-
-            // Skip if a more specific capture already emitted a token at this position.
-            let pos = (start.row, start.column);
-            if last_emitted == Some(pos) {
+            if priority(idx) == 255 {
                 continue;
             }
+            let start = node.range().start_point;
+            let pos = (start.row, start.column);
+            let length = node.range().end_point.column - start.column;
+            token_map
+                .entry(pos)
+                .and_modify(|(existing_idx, _)| {
+                    if priority(idx) < priority(*existing_idx) {
+                        *existing_idx = idx;
+                    }
+                })
+                .or_insert((idx, length));
+        }
 
-            let delta_line = start.row as u32 - previous_line;
-            let delta_start = if delta_line == 0 {
-                start.column as u32 - previous_col
+        let mut previous_line = 0u32;
+        let mut previous_col = 0u32;
+
+        for ((row, col), (idx, length)) in token_map {
+            let tokentype = if idx == comment_idx {
+                SemanticTokenType::COMMENT
+            } else if idx == keyword_idx {
+                SemanticTokenType::KEYWORD
+            } else if idx == string_idx {
+                SemanticTokenType::STRING
+            } else if idx == preproc_idx {
+                SemanticTokenType::FUNCTION
+            } else if idx == macro_idx {
+                SemanticTokenType::MACRO
+            } else if idx == float_idx {
+                SemanticTokenType::NUMBER
+            } else if idx == label_idx {
+                SemanticTokenType::NAMESPACE
             } else {
-                start.column as u32
+                SemanticTokenType::VARIABLE
             };
 
-            let tokentype = {
-                if idx == comment_idx {
-                    SemanticTokenType::COMMENT
-                } else if idx == keyword_idx {
-                    SemanticTokenType::KEYWORD
-                } else if idx == string_idx {
-                    SemanticTokenType::STRING
-                } else if idx == preproc_idx {
-                    SemanticTokenType::FUNCTION
-                } else if idx == macro_idx {
-                    SemanticTokenType::MACRO
-                } else if idx == float_idx {
-                    SemanticTokenType::NUMBER
-                } else if idx == label_idx {
-                    SemanticTokenType::NAMESPACE
-                } else if idx == variable_idx {
-                    SemanticTokenType::VARIABLE
-                } else {
-                    continue;
-                }
+            let delta_line = row as u32 - previous_line;
+            let delta_start = if delta_line == 0 {
+                col as u32 - previous_col
+            } else {
+                col as u32
             };
 
             ret.push(SemanticToken {
                 delta_line,
                 delta_start,
-                length: node.range().end_point.column as u32 - start.column as u32,
+                length: length as u32,
                 token_type: SEMANTIC_SYMBOL_LEGEND
                     .iter()
                     .position(|x| *x == tokentype)
@@ -481,9 +505,8 @@ impl LanguageServer for Backend {
                 token_modifiers_bitset: 0,
             });
 
-            last_emitted = Some(pos);
-            previous_line = start.row as u32;
-            previous_col = start.column as u32;
+            previous_line = row as u32;
+            previous_col = col as u32;
         }
         Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
             result_id: None,
