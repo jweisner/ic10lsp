@@ -190,26 +190,12 @@ struct Backend {
 #[async_trait]
 impl LanguageServer for Backend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        let mut utf8_supported = false;
-        if let Some(encodings) = params
+        let utf8_supported = params
             .capabilities
             .general
             .and_then(|x| x.position_encodings)
-        {
-            for encoding in encodings {
-                if encoding == PositionEncodingKind::UTF8 {
-                    utf8_supported = true;
-                }
-            }
-            if !utf8_supported {
-                self.client
-                    .show_message(
-                        MessageType::WARNING,
-                        "Client does not support UTF-8. Non-ASCII characters will cause problems.",
-                    )
-                    .await;
-            }
-        }
+            .map(|encodings| encodings.contains(&PositionEncodingKind::UTF8))
+            .unwrap_or(false);
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
