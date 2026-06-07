@@ -48,6 +48,7 @@ const SEMANTIC_SYMBOL_LEGEND: &'static [SemanticTokenType] = &[
     SemanticTokenType::MACRO,
     SemanticTokenType::NUMBER,
     SemanticTokenType::VARIABLE,
+    SemanticTokenType::NAMESPACE,
 ];
 struct DocumentData {
     url: Url,
@@ -371,11 +372,11 @@ impl LanguageServer for Backend {
 
                 ret.push(InlayHint {
                     position: endpos.into(),
-                    label: InlayHintLabel::String(item_name.to_string()),
+                    label: InlayHintLabel::String(format!(" → {item_name}")),
                     kind: Some(InlayHintKind::TYPE),
                     text_edits: None,
                     tooltip: None,
-                    padding_left: Some(true),
+                    padding_left: None,
                     padding_right: None,
                     data: None,
                 });
@@ -410,12 +411,14 @@ impl LanguageServer for Backend {
              (device)@preproc
              (register)@macro
              (number)@float
+             (label (identifier)@label)
              (identifier)@variable",
         )
         .unwrap();
 
         let mut previous_line = 0u32;
         let mut previous_col = 0u32;
+        let mut last_emitted: Option<(usize, usize)> = None;
 
         let comment_idx = query.capture_index_for_name("comment").unwrap();
         let keyword_idx = query.capture_index_for_name("keyword").unwrap();
@@ -423,6 +426,7 @@ impl LanguageServer for Backend {
         let preproc_idx = query.capture_index_for_name("preproc").unwrap();
         let macro_idx = query.capture_index_for_name("macro").unwrap();
         let float_idx = query.capture_index_for_name("float").unwrap();
+        let label_idx = query.capture_index_for_name("label").unwrap();
         let variable_idx = query.capture_index_for_name("variable").unwrap();
 
         let mut captures = cursor.captures(&query, tree.root_node(), document.content.as_bytes());
@@ -430,6 +434,12 @@ impl LanguageServer for Backend {
             let node = capture.captures[0].node;
             let idx = capture.captures[0].index;
             let start = node.range().start_point;
+
+            // Skip if a more specific capture already emitted a token at this position.
+            let pos = (start.row, start.column);
+            if last_emitted == Some(pos) {
+                continue;
+            }
 
             let delta_line = start.row as u32 - previous_line;
             let delta_start = if delta_line == 0 {
@@ -451,6 +461,8 @@ impl LanguageServer for Backend {
                     SemanticTokenType::MACRO
                 } else if idx == float_idx {
                     SemanticTokenType::NUMBER
+                } else if idx == label_idx {
+                    SemanticTokenType::NAMESPACE
                 } else if idx == variable_idx {
                     SemanticTokenType::VARIABLE
                 } else {
@@ -469,6 +481,7 @@ impl LanguageServer for Backend {
                 token_modifiers_bitset: 0,
             });
 
+            last_emitted = Some(pos);
             previous_line = start.row as u32;
             previous_col = start.column as u32;
         }
